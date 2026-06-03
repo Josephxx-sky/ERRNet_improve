@@ -49,7 +49,7 @@ class EdgeMap(nn.Module):
     def __init__(self, scale=1):
         super(EdgeMap, self).__init__()
         self.scale = scale
-        self.requires_grad = False
+        self.requires_grad_(False)
 
     def forward(self, img):
         img = img / self.scale
@@ -104,16 +104,12 @@ class ERRNetBase(BaseModel):
                 target_r = target_r.to(device=self.gpu_ids[0])                
         
         self.input = input
-        
-        self.input_edge = self.edge_map(self.input)
         self.target_t = target_t
+        self.target_r = target_r
         self.data_name = data_name
 
         self.issyn = not _flag_enabled(data, 'real', default=False)
-        self.aligned = not _flag_enabled(data, 'unaligned', default=False)
-        
-        if target_t is not None:            
-            self.target_edge = self.edge_map(self.target_t)         
+        self.aligned = not _flag_enabled(data, 'unaligned', default=False)         
             
     def eval(self, data, savedir=None, suffix=None, pieapp=None):
         # only the 1st input of the whole minibatch would be evaluated
@@ -121,7 +117,30 @@ class ERRNetBase(BaseModel):
         self.set_input(data, 'eval')
 
         with torch.no_grad():
-            self.forward()
+            tta_mode = getattr(self.opt, 'tta_mode', 'none')
+            if tta_mode != 'none':
+                # Test-Time Augmentation
+                original_input = self.input.clone()
+                self.forward()
+                output = self.output_i
+                # hflip
+                self.input = torch.flip(original_input, dims=[3])
+                self.forward()
+                output_h = torch.flip(self.output_i, dims=[3])
+                if tta_mode == 'full':
+                    # vflip
+                    self.input = torch.flip(original_input, dims=[2])
+                    self.forward()
+                    output_v = torch.flip(self.output_i, dims=[2])
+                    # average (original + hflip + vflip)
+                    self.output_i = (output + output_h + output_v) / 3.0
+                else:
+                    # average (original + hflip)
+                    self.output_i = (output + output_h) / 2.0
+                # restore
+                self.input = original_input
+            else:
+                self.forward()
 
             output_i = tensor2im(self.output_i)
             target = tensor2im(self.target_t)
@@ -168,8 +187,32 @@ class ERRNetBase(BaseModel):
                 return 
         
         with torch.no_grad():
-            output_i = self.forward()
-            output_i = tensor2im(output_i)
+            tta_mode = getattr(self.opt, 'tta_mode', 'none')
+            if tta_mode != 'none':
+                # Test-Time Augmentation
+                original_input = self.input.clone()
+                self.forward()
+                output = self.output_i
+                # hflip
+                self.input = torch.flip(original_input, dims=[3])
+                self.forward()
+                output_h = torch.flip(self.output_i, dims=[3])
+                if tta_mode == 'full':
+                    # vflip
+                    self.input = torch.flip(original_input, dims=[2])
+                    self.forward()
+                    output_v = torch.flip(self.output_i, dims=[2])
+                    # average (original + hflip + vflip)
+                    self.output_i = (output + output_h + output_v) / 3.0
+                else:
+                    # average (original + hflip)
+                    self.output_i = (output + output_h) / 2.0
+                # restore
+                self.input = original_input
+            else:
+                self.forward()
+
+            output_i = tensor2im(self.output_i)
                 # if os.path.exists(join(savedir, name,'t_output.png')):
                 #     i = 2
                 #     while True:
@@ -220,7 +263,6 @@ class ERRNetModel(ERRNetBase):
         
         self.net_i = arch.__dict__[self.opt.inet](in_channels, 3).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
-        self.edge_map = EdgeMap(scale=1).to(self.device)
 
         if self.isTrain:
             # define loss functions
@@ -228,6 +270,14 @@ class ERRNetModel(ERRNetBase):
             vggloss = losses.ContentLoss()
             vggloss.initialize(losses.VGGLoss(self.vgg))
             self.loss_dic['t_vgg'] = vggloss
+
+            ssim_loss = losses.ContentLoss()
+            ssim_loss.initialize(losses.SSIMLoss())
+            self.loss_dic['t_ssim'] = ssim_loss
+
+            fft_loss = losses.ContentLoss()
+            fft_loss.initialize(losses.FFTLoss())
+            self.loss_dic['t_fft'] = fft_loss
 
             cxloss = losses.ContentLoss()
             if opt.unaligned_loss == 'vgg':
@@ -280,6 +330,9 @@ class ERRNetModel(ERRNetBase):
         self.loss_CX = None
         self.loss_icnn_pixel = None
         self.loss_icnn_vgg = None
+        self.loss_icnn_ssim = None
+        self.loss_icnn_fft = None
+        self.loss_icnn_r_pixel = None
         self.loss_G_GAN = None
 
         if self.opt.lambda_gan > 0:
@@ -294,7 +347,20 @@ class ERRNetModel(ERRNetBase):
             self.loss_icnn_vgg = self.loss_dic['t_vgg'].get_loss(
                 self.output_i, self.target_t)
 
-            self.loss_G += self.loss_icnn_pixel+self.loss_icnn_vgg*self.opt.lambda_vgg
+            self.loss_G += self.loss_icnn_pixel + self.loss_icnn_vgg * self.opt.lambda_vgg
+            if self.opt.lambda_ssim > 0:
+                self.loss_icnn_ssim = self.loss_dic['t_ssim'].get_loss(
+                    self.output_i, self.target_t)
+                self.loss_G += self.loss_icnn_ssim * self.opt.lambda_ssim
+            if self.opt.lambda_fft > 0:
+                self.loss_icnn_fft = self.loss_dic['t_fft'].get_loss(
+                    self.output_i, self.target_t)
+                self.loss_G += self.loss_icnn_fft * self.opt.lambda_fft
+            if self.opt.lambda_r > 0 and self.target_r is not None:
+                reflect_pred = (self.input - self.output_i).clamp(0, 1)
+                self.loss_icnn_r_pixel = self.loss_dic['r_pixel'].get_loss(
+                    reflect_pred, self.target_r)
+                self.loss_G += self.loss_icnn_r_pixel * self.opt.lambda_r
         else:
             self.loss_CX = self.loss_dic['t_cx'].get_loss(self.output_i, self.target_t)
             
@@ -339,6 +405,12 @@ class ERRNetModel(ERRNetBase):
             ret_errors['IPixel'] = self.loss_icnn_pixel.item()
         if self.loss_icnn_vgg is not None:
             ret_errors['VGG'] = self.loss_icnn_vgg.item()
+        if self.loss_icnn_ssim is not None and self.opt.lambda_ssim > 0:
+            ret_errors['SSIM'] = self.loss_icnn_ssim.item()
+        if self.loss_icnn_fft is not None and self.opt.lambda_fft > 0:
+            ret_errors['FFT'] = self.loss_icnn_fft.item()
+        if self.loss_icnn_r_pixel is not None and self.opt.lambda_r > 0:
+            ret_errors['RPixel'] = self.loss_icnn_r_pixel.item()
             
         if self.opt.lambda_gan > 0 and self.loss_G_GAN is not None:
             ret_errors['G'] = self.loss_G_GAN.item()

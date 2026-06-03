@@ -72,10 +72,27 @@ if opt.resume:
     res = engine.eval(eval_dataloader_ceilnet, dataset_name='testdata_table2')
 
 # define training strategy 
-engine.model.opt.lambda_gan = 0
+engine.model.opt.lambda_gan = 0.01 if engine.epoch >= 20 else 0
 # engine.model.opt.lambda_gan = 0.01
-set_learning_rate(1e-4)
-while engine.epoch < 60:
+if not opt.resume:
+    set_learning_rate(1e-4)
+else:
+    # resume: restore fusion ratio and learning rate based on current epoch
+    if engine.epoch >= 45:
+        ratio = [0.5, 0.5]
+        print('[i] resume: restore fusion ratio to {}'.format(ratio))
+        train_dataset_fusion.fusion_ratios = ratio
+    if engine.epoch >= 80:
+        set_learning_rate(5e-6)
+    elif engine.epoch >= 50:
+        set_learning_rate(1e-5)
+    elif engine.epoch >= 45:
+        set_learning_rate(5e-5)
+    elif engine.epoch >= 40:
+        set_learning_rate(1e-5)
+    elif engine.epoch >= 30:
+        set_learning_rate(5e-5)
+while engine.epoch < opt.nEpochs:
     if engine.epoch == 20:
         engine.model.opt.lambda_gan = 0.01 # gan loss is added after epoch 20
     if engine.epoch == 30:
@@ -89,6 +106,8 @@ while engine.epoch < 60:
         set_learning_rate(5e-5)
     if engine.epoch == 50:
         set_learning_rate(1e-5)
+    if engine.epoch == 80:
+        set_learning_rate(5e-6)
 
     engine.train(train_dataloader_fusion)
     

@@ -39,5 +39,9 @@ class TrainOptions(BaseOptions):
         
         self.parser.add_argument('--lambda_gan', type=float, default=0.01, help='weight for gan loss')
         self.parser.add_argument('--lambda_vgg', type=float, default=0.1, help='weight for vgg loss')
+        self.parser.add_argument('--lambda_ssim', type=float, default=0.0, help='weight for optional SSIM loss on aligned data')
+        self.parser.add_argument('--lambda_fft', type=float, default=0.0, help='weight for optional FFT amplitude-spectrum loss on aligned data')
+        self.parser.add_argument('--lambda_r', type=float, default=0.0, help='weight for reflection layer pixel loss on aligned data')
+        self.parser.add_argument('--use_charbonnier', action='store_true', help='replace MSE in pixel_loss with Charbonnier loss for more robust pixel supervision')
         
         self.isTrain = True

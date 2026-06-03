@@ -32,6 +32,85 @@ class GradientLoss(nn.Module):
         return self.loss(predict_gradx, target_gradx) + self.loss(predict_grady, target_grady)
 
 
+class CharbonnierLoss(nn.Module):
+    """Charbonnier (smooth L1) loss: sqrt((x - y)^2 + eps^2).
+    相比 MSE 对离群点更鲁棒，通常能缓解输出模糊。
+    """
+    def __init__(self, eps=1e-3):
+        super(CharbonnierLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, predict, target):
+        diff = predict - target
+        return torch.mean(torch.sqrt(diff * diff + self.eps * self.eps))
+
+
+class FFTLoss(nn.Module):
+    """Amplitude-spectrum loss in frequency domain.
+    惩罚预测与目标在傅里叶振幅谱上的差异，与空域损失正交，
+    有助于保留高频细节、缓解空域 MSE 导致的过度平滑。
+    """
+    def __init__(self):
+        super(FFTLoss, self).__init__()
+        self.criterion = nn.L1Loss()
+
+    def forward(self, predict, target):
+        # Real FFT over spatial dims, normalized (ortho)
+        pred_fft = torch.fft.rfft2(predict, norm='ortho')
+        tgt_fft = torch.fft.rfft2(target, norm='ortho')
+        # Penalize amplitude (abs) differences; phase is harder to supervise
+        pred_amp = torch.abs(pred_fft)
+        tgt_amp = torch.abs(tgt_fft)
+        return self.criterion(pred_amp, tgt_amp)
+
+
+class SSIMLoss(nn.Module):
+    """Differentiable SSIM loss: 1 - SSIM."""
+    def __init__(self, window_size=11, channel=3, size_average=True):
+        super(SSIMLoss, self).__init__()
+        self.window_size = window_size
+        self.channel = channel
+        self.size_average = size_average
+        self.register_buffer("window", self._create_window(window_size, channel))
+
+    def _gaussian(self, window_size, sigma=1.5):
+        gauss = torch.tensor(
+            [np.exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)],
+            dtype=torch.float32
+        )
+        return gauss / gauss.sum()
+
+    def _create_window(self, window_size, channel):
+        _1d_window = self._gaussian(window_size).unsqueeze(1)
+        _2d_window = _1d_window.mm(_1d_window.t()).unsqueeze(0).unsqueeze(0)
+        window = _2d_window.expand(channel, 1, window_size, window_size).contiguous()
+        return window
+
+    def forward(self, predict, target):
+        channel = predict.size(1)
+        if channel != self.channel or self.window.device != predict.device or self.window.dtype != predict.dtype:
+            self.channel = channel
+            self.window = self._create_window(self.window_size, channel).to(device=predict.device, dtype=predict.dtype)
+
+        mu1 = F.conv2d(predict, self.window, padding=self.window_size // 2, groups=channel)
+        mu2 = F.conv2d(target, self.window, padding=self.window_size // 2, groups=channel)
+
+        mu1_sq = mu1.pow(2)
+        mu2_sq = mu2.pow(2)
+        mu1_mu2 = mu1 * mu2
+
+        sigma1_sq = F.conv2d(predict * predict, self.window, padding=self.window_size // 2, groups=channel) - mu1_sq
+        sigma2_sq = F.conv2d(target * target, self.window, padding=self.window_size // 2, groups=channel) - mu2_sq
+        sigma12 = F.conv2d(predict * target, self.window, padding=self.window_size // 2, groups=channel) - mu1_mu2
+
+        c1 = 0.01 ** 2
+        c2 = 0.03 ** 2
+
+        ssim_map = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / ((mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2))
+        ssim_value = ssim_map.mean() if self.size_average else ssim_map.mean(dim=(1, 2, 3))
+        return 1.0 - ssim_value
+
+
 class MultipleLoss(nn.Module):
     def __init__(self, losses, weight=None):
         super(MultipleLoss, self).__init__()
@@ -255,7 +334,9 @@ def init_loss(opt, tensor):
     loss_dic = {}
 
     pixel_loss = ContentLoss()
-    pixel_loss.initialize(MultipleLoss([nn.MSELoss(), GradientLoss()], [0.2,0.4]))
+    # 支持通过 opt.use_charbonnier 将 pixel 损失中的 MSE 替换为 Charbonnier（更鲁棒）
+    base_pix_loss = CharbonnierLoss() if getattr(opt, 'use_charbonnier', False) else nn.MSELoss()
+    pixel_loss.initialize(MultipleLoss([base_pix_loss, GradientLoss()], [0.2, 0.4]))
 
     loss_dic['t_pixel'] = pixel_loss
     loss_dic['r_pixel'] = pixel_loss

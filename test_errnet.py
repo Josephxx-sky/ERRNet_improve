@@ -85,6 +85,13 @@ def parse_test_args():
         default=None,
         help="resize test images so the longest edge does not exceed this value",
     )
+    parser.add_argument(
+        "--tta_mode",
+        type=str,
+        default="none",
+        choices=["none", "hflip", "full"],
+        help="TTA mode: none=disabled, hflip=horizontal flip only, full=hflip+vflip",
+    )
     args, remaining = parser.parse_known_args()
     sys.argv = [sys.argv[0]] + remaining
     return args
@@ -139,6 +146,8 @@ def main():
     opt.no_log = True
     opt.display_id = 0
     opt.verbose = False
+
+    opt.tta_mode = cli_args.tta_mode
 
     engine = Engine(opt)
 

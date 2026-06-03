@@ -79,7 +79,6 @@ ERRNet/
   train_errnet.py               # aligned-data training
   train_errnet_unaligned.py     # unaligned-data finetuning
   test_errnet.py                # benchmark/custom testing
-  paper.tex                     # course paper
   README_DIP26.md               # short running guide
   requirements.txt
 ```
@@ -225,6 +224,7 @@ python train_errnet_unaligned.py \
 ```
 
 ## Main Results
+The best checkpoints are available at <https://pan.baidu.com/s/1Gq7d8ij17qyyucdO9Sugfw?pwd=yqag>.
 
 ### PSNR / SSIM
 
@@ -279,16 +279,6 @@ ours.png             # improved method output
 These images do not have clean ground-truth transmission layers, so they are
 used only for qualitative visualization.
 
-## Course Report
-
-The course paper is available as:
-
-```text
-paper.tex
-```
-
-It contains the full method description, quantitative results, ablation study,
-negative-result analysis, and qualitative comparison.
 
 ## Acknowledgements
 
@@ -302,15 +292,4 @@ Original repository:
 
 <https://github.com/Vandermode/ERRNet>
 
-## Citation
 
-If you use the original ERRNet code or model, please cite:
-
-```bibtex
-@inproceedings{wei2019single,
-  title={Single Image Reflection Removal Exploiting Misaligned Training Data and Network Enhancements},
-  author={Wei, Kaixuan and Yang, Jiaolong and Fu, Ying and Wipf, David and Huang, Hua},
-  booktitle={IEEE Conference on Computer Vision and Pattern Recognition},
-  year={2019}
-}
-```

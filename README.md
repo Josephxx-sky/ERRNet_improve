@@ -200,11 +200,23 @@ clean ground-truth transmission image.
 
 ## Training
 
-Aligned-data training:
+Baseline aligned-data training:
 
 ```bash
 python train_errnet.py --name errnet --hyper
 ```
+
+Improved aligned-data training:
+
+```bash
+python train_errnet.py \
+  --name errnet_charb_fft \
+  --hyper \
+  --use_charbonnier \
+  --lambda_fft 0.05
+```
+
+The proposed Charbonnier loss and FFT amplitude loss are controlled by command-line options and are not enabled by default. `--use_charbonnier` replaces the MSE term in the pixel loss with Charbonnier loss, and `--lambda_fft 0.05` enables the FFT amplitude loss with weight 0.05.
 
 CPU debug run:
 
@@ -223,7 +235,28 @@ python train_errnet_unaligned.py \
   --unaligned_loss vgg
 ```
 
+## Testing
+
+Baseline testing:
+
+```bash
+python test_errnet.py --name errnet --hyper
+```
+
+Improved testing with TTA:
+
+```bash
+python test_errnet.py \
+  --name errnet_charb_fft \
+  --hyper \
+  --tta_mode full
+```
+
+Test-time augmentation is controlled by `--tta_mode` and is not enabled by default. `--tta_mode full` averages predictions from the original image, horizontal flip, and vertical flip.
+
 ## Main Results
+The final method, denoted as **Ours: Charbonnier + FFT + TTA**, uses `--use_charbonnier`, `--lambda_fft 0.05`, and `--tta_mode full`.
+
 The best checkpoints are available at <https://pan.baidu.com/s/1Gq7d8ij17qyyucdO9Sugfw?pwd=yqag>.
 
 ### PSNR / SSIM
@@ -291,5 +324,4 @@ This project is based on the official ERRNet implementation:
 Original repository:
 
 <https://github.com/Vandermode/ERRNet>
-
 
